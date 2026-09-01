@@ -39,3 +39,14 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# firmaya: contratos y base de datos, nunca al repositorio
+/data
+/storage
+!.env.example
+
+# worker de pdf.js: se regenera con npm install
+/public/pdf.worker.min.mjs
+
+# Contratos sueltos en la raiz: nunca al repositorio
+/*.pdf
