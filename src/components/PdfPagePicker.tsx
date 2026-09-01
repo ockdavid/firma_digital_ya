@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export interface Marker {
   signerId: string;
@@ -21,6 +21,16 @@ interface Props {
   onPlace: (signerId: string, position: Position) => void;
 }
 
+interface PdfPage {
+  getViewport: (o: { scale: number }) => { width: number; height: number };
+  render: (o: object) => { promise: Promise<void>; cancel: () => void };
+}
+
+interface PdfDoc {
+  numPages: number;
+  getPage: (n: number) => Promise<PdfPage>;
+}
+
 /**
  * Muestra el PDF y deja marcar dónde firma cada parte.
  *
@@ -38,88 +48,97 @@ export default function PdfPagePicker({
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
-  const docRef = useRef<{ numPages: number; getPage: (n: number) => Promise<unknown> } | null>(
-    null,
-  );
-  const renderTaskRef = useRef<{ cancel: () => void } | null>(null);
+  const docRef = useRef<PdfDoc | null>(null);
 
   const [pages, setPages] = useState(0);
   const [page, setPage] = useState(1);
   const [error, setError] = useState<string | null>(null);
-  const [cargando, setCargando] = useState(true);
+  // Última página realmente pintada: de aquí sale el indicador de carga, sin
+  // tener que tocar estado nada más entrar en el efecto.
+  const [pintada, setPintada] = useState(0);
+  const [redibujar, setRedibujar] = useState(0);
+  const cargando = pages === 0 || pintada !== page;
 
   useEffect(() => {
-    let cancelled = false;
+    let vivo = true;
 
     (async () => {
       try {
         const pdfjs = await import("pdfjs-dist");
         pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
-        const doc = await pdfjs.getDocument({ url: fileUrl }).promise;
-        if (cancelled) return;
-        docRef.current = doc as never;
+        const doc = (await pdfjs.getDocument({ url: fileUrl }).promise) as unknown as PdfDoc;
+        if (!vivo) return;
+        docRef.current = doc;
         setPages(doc.numPages);
-        setPage(1);
       } catch {
-        if (!cancelled) setError("No se pudo abrir el PDF para colocarlo.");
+        if (vivo) setError("No se pudo abrir el PDF para colocarlo.");
       }
     })();
 
     return () => {
-      cancelled = true;
+      vivo = false;
       docRef.current = null;
     };
   }, [fileUrl]);
 
-  const render = useCallback(async () => {
-    const doc = docRef.current;
-    const canvas = canvasRef.current;
-    const wrapper = wrapperRef.current;
-    if (!doc || !canvas || !wrapper) return;
+  useEffect(() => {
+    if (pages === 0) return;
 
-    renderTaskRef.current?.cancel();
-    setCargando(true);
+    let vivo = true;
+    let tarea: { promise: Promise<void>; cancel: () => void } | null = null;
 
-    try {
-      const pdfPage = (await doc.getPage(page)) as {
-        getViewport: (o: { scale: number }) => { width: number; height: number };
-        render: (o: object) => { promise: Promise<void>; cancel: () => void };
-      };
+    (async () => {
+      const doc = docRef.current;
+      const canvas = canvasRef.current;
+      const wrapper = wrapperRef.current;
+      if (!doc || !canvas || !wrapper) return;
 
-      const base = pdfPage.getViewport({ scale: 1 });
-      const anchoDisponible = wrapper.clientWidth || 640;
-      const escala = anchoDisponible / base.width;
-      const ratio = window.devicePixelRatio || 1;
-      const viewport = pdfPage.getViewport({ scale: escala * ratio });
+      try {
+        const pdfPage = await doc.getPage(page);
+        if (!vivo) return;
 
-      canvas.width = Math.floor(viewport.width);
-      canvas.height = Math.floor(viewport.height);
-      canvas.style.width = "100%";
-      canvas.style.height = "auto";
+        const base = pdfPage.getViewport({ scale: 1 });
+        const ancho = wrapper.clientWidth || 640;
+        const ratio = window.devicePixelRatio || 1;
+        const viewport = pdfPage.getViewport({ scale: (ancho / base.width) * ratio });
 
-      const task = pdfPage.render({ canvas, viewport });
-      renderTaskRef.current = task;
-      await task.promise;
-      renderTaskRef.current = null;
-      setCargando(false);
-    } catch (e) {
-      // Cancelar un render en curso lanza: no es un error que mostrar.
-      if ((e as { name?: string })?.name !== "RenderingCancelledException") {
-        setError("No se pudo dibujar esta página.");
-        setCargando(false);
+        canvas.width = Math.floor(viewport.width);
+        canvas.height = Math.floor(viewport.height);
+        canvas.style.width = "100%";
+        canvas.style.height = "auto";
+
+        tarea = pdfPage.render({ canvas, viewport });
+        await tarea.promise;
+        if (vivo) setPintada(page);
+      } catch (e) {
+        // Cancelar un render en curso lanza: no es un error que mostrar.
+        const cancelado = (e as { name?: string })?.name === "RenderingCancelledException";
+        if (vivo && !cancelado) setError("No se pudo dibujar esta página.");
       }
-    }
-  }, [page]);
+    })();
 
-  useEffect(() => {
-    if (pages > 0) void render();
-  }, [pages, render]);
+    // Solo se cancela cuando este render queda superado por otro. Cancelar al
+    // entrar dejaba la página a medio pintar si llegaban dos avisos seguidos.
+    return () => {
+      vivo = false;
+      tarea?.cancel();
+    };
+  }, [pages, page, redibujar]);
 
+  // Al cambiar el ancho hay que rehacer el lienzo. Con espera: al arrastrar,
+  // el navegador dispara decenas de eventos y cada uno abortaría el anterior.
   useEffect(() => {
-    const onResize = () => void render();
+    let temporizador: ReturnType<typeof setTimeout>;
+    const onResize = () => {
+      clearTimeout(temporizador);
+      temporizador = setTimeout(() => setRedibujar((n) => n + 1), 200);
+    };
     window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, [render]);
+    return () => {
+      clearTimeout(temporizador);
+      window.removeEventListener("resize", onResize);
+    };
+  }, []);
 
   function place(event: React.MouseEvent<HTMLDivElement>) {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -131,11 +150,7 @@ export default function PdfPagePicker({
   }
 
   if (error) {
-    return (
-      <div className="card px-5 py-10 text-center text-sm text-red-600">
-        {error}
-      </div>
-    );
+    return <div className="card px-5 py-10 text-center text-sm text-red-600">{error}</div>;
   }
 
   return (
