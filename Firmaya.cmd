@@ -37,12 +37,26 @@ if not exist ".env.local" (
 )
 
 echo.
+echo Preparando Firmaya. Esto tarda unos segundos la primera vez.
+echo.
+
+rem Modo produccion: compilar una vez y servir. En modo desarrollo cada
+rem pantalla se compila al abrirla y tarda un par de segundos.
+call npm run build
+if errorlevel 1 (
+  echo.
+  echo Fallo la preparacion. Revisa los errores de arriba.
+  pause
+  exit /b 1
+)
+
+echo.
 echo Arrancando Firmaya. El navegador se abrira solo en unos segundos.
 echo Para parar el servidor: cierra esta ventana o pulsa Ctrl+C.
 echo.
 
 start "" /b node scripts\abrir-navegador.mjs
-call npm run dev
+call npm start
 
 echo.
 echo El servidor se ha detenido.

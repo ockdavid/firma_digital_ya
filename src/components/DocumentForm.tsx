@@ -215,18 +215,11 @@ export default function DocumentForm({ documentId, initial }: Props) {
                 onChange={(e) => update(index, { email: e.target.value })}
                 required
               />
-              <input
-                className="input"
-                placeholder="Rol (arrendatario, inversor…)"
-                list={`roles-${index}`}
+              <RoleField
                 value={signer.role}
-                onChange={(e) => update(index, { role: e.target.value })}
+                options={ROLE_SUGGESTIONS[kind]}
+                onChange={(role) => update(index, { role })}
               />
-              <datalist id={`roles-${index}`}>
-                {ROLE_SUGGESTIONS[kind].map((r) => (
-                  <option key={r} value={r} />
-                ))}
-              </datalist>
               <div className="flex gap-2">
                 <select
                   className="input w-32 shrink-0"
@@ -280,5 +273,76 @@ export default function DocumentForm({ documentId, initial }: Props) {
         No se envía ningún correo todavía: el siguiente paso es colocar las firmas y revisar.
       </p>
     </form>
+  );
+}
+
+const ROL_LIBRE = "__otro__";
+
+/**
+ * Rol del firmante: lista desplegable con los del tipo de contrato, más una
+ * salida a texto libre.
+ *
+ * Antes era un input con datalist, pero el navegador filtra esas sugerencias
+ * por lo ya escrito: con "Arrendatario" puesto, la flecha solo ofrecía
+ * "Arrendatario" y parecía que faltaban opciones.
+ */
+function RoleField({
+  value,
+  options,
+  onChange,
+}: {
+  value: string;
+  options: string[];
+  onChange: (value: string) => void;
+}) {
+  const enLista = options.includes(value);
+  const [libre, setLibre] = useState(value !== "" && !enLista);
+  const mostrarTexto = libre || (value !== "" && !enLista);
+
+  if (mostrarTexto) {
+    return (
+      <div>
+        <input
+          className="input"
+          autoFocus
+          placeholder="Escribe el rol"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+        />
+        <button
+          type="button"
+          onClick={() => {
+            setLibre(false);
+            onChange("");
+          }}
+          className="mt-1 text-xs font-medium text-zinc-500 underline-offset-2 hover:text-zinc-900 hover:underline"
+        >
+          Elegir de la lista
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <select
+      className="input"
+      value={value}
+      onChange={(e) => {
+        if (e.target.value === ROL_LIBRE) {
+          setLibre(true);
+          onChange("");
+          return;
+        }
+        onChange(e.target.value);
+      }}
+    >
+      <option value="">Rol (opcional)</option>
+      {options.map((r) => (
+        <option key={r} value={r}>
+          {r}
+        </option>
+      ))}
+      <option value={ROL_LIBRE}>Otro…</option>
+    </select>
   );
 }
