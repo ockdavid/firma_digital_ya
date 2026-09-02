@@ -35,15 +35,30 @@ export interface SignerRow {
   token_hash: string | null;
   token_expires_at: string | null;
   status: SignerStatus;
-  /** Posición de la firma, normalizada 0..1 desde la esquina superior izquierda. */
+  /**
+   * Caja de la firma para todo el documento, normalizada 0..1 desde la esquina
+   * superior izquierda: pos_x y pos_y son su centro. Las páginas que necesitan
+   * otro sitio van en signer_page_boxes.
+   */
   pos_x: number | null;
   pos_y: number | null;
+  pos_w: number | null;
+  pos_h: number | null;
   failed_attempts: number;
   locked_until: string | null;
   viewed_at: string | null;
   signed_at: string | null;
   sign_ip: string | null;
   sign_user_agent: string | null;
+}
+
+export interface PageBoxRow {
+  signer_id: string;
+  page: number;
+  pos_x: number;
+  pos_y: number;
+  pos_w: number;
+  pos_h: number;
 }
 
 export interface AuditRow {
@@ -91,6 +106,8 @@ CREATE TABLE IF NOT EXISTS signers (
   status           TEXT NOT NULL DEFAULT 'pending',
   pos_x            REAL,
   pos_y            REAL,
+  pos_w            REAL,
+  pos_h            REAL,
   failed_attempts  INTEGER NOT NULL DEFAULT 0,
   locked_until     TEXT,
   viewed_at        TEXT,
@@ -99,6 +116,17 @@ CREATE TABLE IF NOT EXISTS signers (
   sign_user_agent  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_signers_document ON signers(document_id);
+
+-- Excepciones: páginas donde la firma no cabe en el sitio general y va a otro.
+CREATE TABLE IF NOT EXISTS signer_page_boxes (
+  signer_id TEXT NOT NULL REFERENCES signers(id) ON DELETE CASCADE,
+  page      INTEGER NOT NULL,
+  pos_x     REAL NOT NULL,
+  pos_y     REAL NOT NULL,
+  pos_w     REAL NOT NULL,
+  pos_h     REAL NOT NULL,
+  PRIMARY KEY (signer_id, page)
+);
 
 -- Registro append-only. Es la prueba de qué pasó y cuándo.
 CREATE TABLE IF NOT EXISTS audit_events (
@@ -121,6 +149,8 @@ CREATE TABLE IF NOT EXISTS placement_templates (
   slot  INTEGER NOT NULL,
   pos_x REAL NOT NULL,
   pos_y REAL NOT NULL,
+  pos_w REAL,
+  pos_h REAL,
   PRIMARY KEY (kind, slot)
 );
 `;
@@ -129,6 +159,10 @@ CREATE TABLE IF NOT EXISTS placement_templates (
 const MIGRACIONES: { tabla: string; columna: string; definicion: string }[] = [
   { tabla: "signers", columna: "pos_x", definicion: "REAL" },
   { tabla: "signers", columna: "pos_y", definicion: "REAL" },
+  { tabla: "signers", columna: "pos_w", definicion: "REAL" },
+  { tabla: "signers", columna: "pos_h", definicion: "REAL" },
+  { tabla: "placement_templates", columna: "pos_w", definicion: "REAL" },
+  { tabla: "placement_templates", columna: "pos_h", definicion: "REAL" },
 ];
 
 function migrar(database: Database.Database): void {

@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import PdfPagePicker, { type Position } from "./PdfPagePicker";
+import PdfPagePicker from "./PdfPagePicker";
+import { cajaGuardada, mismaCaja, type Box } from "@/lib/box";
 
 export interface PrepareSigner {
   id: string;
@@ -14,6 +15,8 @@ export interface PrepareSigner {
   docIdMasked: string;
   posX: number | null;
   posY: number | null;
+  posW: number | null;
+  posH: number | null;
 }
 
 interface Props {
@@ -22,6 +25,8 @@ interface Props {
   kindLabel: string;
   pageCount: number;
   signers: PrepareSigner[];
+  /** Excepciones ya guardadas: firmante → número de página → caja. */
+  pageBoxes: Record<string, Record<number, Box>>;
 }
 
 const COLORES = ["#2563eb", "#c2410c", "#7c3aed", "#0f766e", "#be123c", "#a16207"];
@@ -32,17 +37,21 @@ export default function PrepareFlow({
   kindLabel,
   pageCount,
   signers,
+  pageBoxes,
 }: Props) {
   const router = useRouter();
   const [paso, setPaso] = useState<"colocar" | "revisar">("colocar");
   const [activo, setActivo] = useState(signers[0]?.id ?? "");
-  const [posiciones, setPosiciones] = useState<Record<string, Position | undefined>>(() =>
+  const [pagina, setPagina] = useState(1);
+  // Caja general de cada firmante, la que se repite en todas las páginas.
+  const [cajas, setCajas] = useState<Record<string, Box | undefined>>(() =>
     Object.fromEntries(
-      signers.map((s) => [
-        s.id,
-        s.posX !== null && s.posY !== null ? { x: s.posX, y: s.posY } : undefined,
-      ]),
+      signers.map((s) => [s.id, cajaGuardada(s.posX, s.posY, s.posW, s.posH) ?? undefined]),
     ),
+  );
+  // Excepciones: páginas donde la firma no cabe en el sitio general.
+  const [porPagina, setPorPagina] = useState<Record<string, Record<number, Box>>>(
+    () => ({ ...pageBoxes }),
   );
   const [error, setError] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState(false);
@@ -53,11 +62,70 @@ export default function PrepareFlow({
     color: COLORES[i % COLORES.length],
   }));
 
+  const nombreActivo = signers.find((s) => s.id === activo)?.name ?? "";
+  const excepcionesActivo = porPagina[activo] ?? {};
+  const paginaEsPropia = Boolean(excepcionesActivo[pagina]);
+
+  /**
+   * La primera caja que dibujas vale para todo el documento. A partir de ahí,
+   * moverla en una página concreta solo cambia esa página.
+   */
+  function colocar(signerId: string, page: number, box: Box) {
+    if (!cajas[signerId]) {
+      setCajas((prev) => ({ ...prev, [signerId]: box }));
+      return;
+    }
+    setPorPagina((prev) => {
+      const suyas = { ...(prev[signerId] ?? {}) };
+      if (mismaCaja(box, cajas[signerId])) delete suyas[page];
+      else suyas[page] = box;
+      return { ...prev, [signerId]: suyas };
+    });
+  }
+
+  /** Esta página vuelve a usar la posición general. */
+  function usarGeneral() {
+    setPorPagina((prev) => {
+      const suyas = { ...(prev[activo] ?? {}) };
+      delete suyas[pagina];
+      return { ...prev, [activo]: suyas };
+    });
+  }
+
+  /** La posición de esta página pasa a ser la de todas. */
+  function aplicarATodas() {
+    const caja = excepcionesActivo[pagina];
+    if (!caja) return;
+    setCajas((prev) => ({ ...prev, [activo]: caja }));
+    setPorPagina((prev) => ({ ...prev, [activo]: {} }));
+  }
+
+  /** Sin caja, la rúbrica se va al margen inferior derecho. */
+  function quitarPosicion() {
+    setCajas((prev) => ({ ...prev, [activo]: undefined }));
+    setPorPagina((prev) => ({ ...prev, [activo]: {} }));
+  }
+
   async function guardarPosiciones(): Promise<boolean> {
     const placements = signers
-      .map((s) => ({ signerId: s.id, position: posiciones[s.id] }))
-      .filter((p) => p.position)
-      .map((p) => ({ signerId: p.signerId, x: p.position!.x, y: p.position!.y }));
+      .filter((s) => cajas[s.id])
+      .map((s) => {
+        const caja = cajas[s.id]!;
+        return {
+          signerId: s.id,
+          x: caja.x,
+          y: caja.y,
+          w: caja.w,
+          h: caja.h,
+          pages: Object.entries(porPagina[s.id] ?? {}).map(([page, propia]) => ({
+            page: Number(page),
+            x: propia.x,
+            y: propia.y,
+            w: propia.w,
+            h: propia.h,
+          })),
+        };
+      });
 
     const response = await fetch(`/api/documents/${documentId}/placement`, {
       method: "PUT",
@@ -108,7 +176,7 @@ export default function PrepareFlow({
     setOcupado(false);
   }
 
-  const sinColocar = signers.filter((s) => !posiciones[s.id]);
+  const sinColocar = signers.filter((s) => !cajas[s.id]);
 
   return (
     <div className="space-y-6">
@@ -135,15 +203,17 @@ export default function PrepareFlow({
           <div className="card p-5">
             <h2 className="text-sm font-semibold">Dónde firma cada uno</h2>
             <p className="mt-1 mb-4 text-xs leading-relaxed text-zinc-500">
-              Elige a una persona y haz clic sobre el documento donde debe ir su firma. Esa
-              posición se repite en las {pageCount} páginas. Si no marcas a alguien, su rúbrica
-              irá al margen inferior derecho.
+              Elige a una persona y dibuja arrastrando la caja donde debe ir su firma; un clic
+              suelto la pone con el tamaño de siempre. Después puedes arrastrarla para moverla o
+              tirar de su esquina para cambiarle el tamaño. La primera caja vale para las{" "}
+              {pageCount} páginas: si la mueves dentro de una página concreta, solo cambia esa. Si
+              no marcas a alguien, su rúbrica irá al margen inferior derecho.
             </p>
 
             <div className="flex flex-wrap gap-2">
               {signers.map((signer, i) => {
                 const color = COLORES[i % COLORES.length];
-                const colocado = Boolean(posiciones[signer.id]);
+                const colocado = Boolean(cajas[signer.id]);
                 const esActivo = signer.id === activo;
                 return (
                   <button
@@ -169,14 +239,35 @@ export default function PrepareFlow({
               })}
             </div>
 
-            {posiciones[activo] && (
+            {paginaEsPropia && (
+              <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600">
+                <span>
+                  En la página {pagina}, {nombreActivo} firma en un sitio distinto al general.
+                </span>
+                <button
+                  type="button"
+                  onClick={usarGeneral}
+                  className="font-medium text-zinc-900 underline-offset-2 hover:underline"
+                >
+                  Usar la posición general
+                </button>
+                <button
+                  type="button"
+                  onClick={aplicarATodas}
+                  className="font-medium text-zinc-900 underline-offset-2 hover:underline"
+                >
+                  Aplicar esta a todas las páginas
+                </button>
+              </div>
+            )}
+
+            {cajas[activo] && (
               <button
                 type="button"
-                onClick={() => setPosiciones((prev) => ({ ...prev, [activo]: undefined }))}
+                onClick={quitarPosicion}
                 className="mt-3 text-xs font-medium text-zinc-500 underline-offset-2 hover:text-zinc-900 hover:underline"
               >
-                Quitar la posición de {signers.find((s) => s.id === activo)?.name} y dejarla al
-                margen
+                Quitar la posición de {nombreActivo} y dejarla al margen
               </button>
             )}
           </div>
@@ -184,11 +275,12 @@ export default function PrepareFlow({
           <PdfPagePicker
             fileUrl={`/api/documents/${documentId}/file`}
             markers={marcadores}
-            positions={posiciones}
+            boxes={cajas}
+            pageBoxes={porPagina}
             activeSignerId={activo}
-            onPlace={(signerId, position) =>
-              setPosiciones((prev) => ({ ...prev, [signerId]: position }))
-            }
+            page={pagina}
+            onPageChange={setPagina}
+            onPlace={colocar}
           />
 
           {error && <ErrorBox mensaje={error} />}
@@ -208,29 +300,36 @@ export default function PrepareFlow({
               </p>
             </div>
 
-            {signers.map((signer, i) => (
-              <div key={signer.id} className="flex flex-wrap items-center gap-3 px-5 py-4">
-                <span
-                  className="h-2.5 w-2.5 shrink-0 rounded-full"
-                  style={{ backgroundColor: COLORES[i % COLORES.length] }}
-                />
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold">
-                    {signer.name}
-                    {signer.role && (
-                      <span className="ml-2 font-normal text-zinc-400">{signer.role}</span>
-                    )}
-                  </p>
-                  <p className="mt-0.5 truncate text-xs text-zinc-500">
-                    {signer.email} · le pediremos su {signer.docIdType.toUpperCase()}{" "}
-                    {signer.docIdMasked}
-                  </p>
+            {signers.map((signer, i) => {
+              const propias = Object.keys(porPagina[signer.id] ?? {}).length;
+              return (
+                <div key={signer.id} className="flex flex-wrap items-center gap-3 px-5 py-4">
+                  <span
+                    className="h-2.5 w-2.5 shrink-0 rounded-full"
+                    style={{ backgroundColor: COLORES[i % COLORES.length] }}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold">
+                      {signer.name}
+                      {signer.role && (
+                        <span className="ml-2 font-normal text-zinc-400">{signer.role}</span>
+                      )}
+                    </p>
+                    <p className="mt-0.5 truncate text-xs text-zinc-500">
+                      {signer.email} · le pediremos su {signer.docIdType.toUpperCase()}{" "}
+                      {signer.docIdMasked}
+                    </p>
+                  </div>
+                  <span className="pill bg-zinc-100 text-zinc-600">
+                    {!cajas[signer.id]
+                      ? "al margen"
+                      : propias === 0
+                        ? "posición marcada"
+                        : `posición marcada · ${propias} página${propias === 1 ? "" : "s"} aparte`}
+                  </span>
                 </div>
-                <span className="pill bg-zinc-100 text-zinc-600">
-                  {posiciones[signer.id] ? "posición marcada" : "al margen"}
-                </span>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           <div className="card px-5 py-4">

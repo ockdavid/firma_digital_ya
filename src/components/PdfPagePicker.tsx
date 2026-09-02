@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { CAJA_ALTO, CAJA_ANCHO, CAJA_MINIMA, desdeEsquinas, encajar, type Box } from "@/lib/box";
 
 export interface Marker {
   signerId: string;
@@ -8,17 +9,17 @@ export interface Marker {
   color: string;
 }
 
-export interface Position {
-  x: number;
-  y: number;
-}
-
 interface Props {
   fileUrl: string;
   markers: Marker[];
-  positions: Record<string, Position | undefined>;
+  /** Caja general de cada firmante: la que vale para todas las páginas. */
+  boxes: Record<string, Box | undefined>;
+  /** Excepciones: firmante → número de página → caja. */
+  pageBoxes: Record<string, Record<number, Box> | undefined>;
   activeSignerId: string;
-  onPlace: (signerId: string, position: Position) => void;
+  page: number;
+  onPageChange: (page: number) => void;
+  onPlace: (signerId: string, page: number, box: Box) => void;
 }
 
 interface PdfPage {
@@ -31,33 +32,59 @@ interface PdfDoc {
   getPage: (n: number) => Promise<PdfPage>;
 }
 
+type Modo = "crear" | "mover" | "tamano";
+
+interface Arrastre {
+  modo: Modo;
+  signerId: string;
+  /** Esquina que se queda quieta al crear o al redimensionar. */
+  ancla: { x: number; y: number };
+  /** Distancia del puntero al centro de la caja, al empezar a moverla. */
+  desvio: { x: number; y: number };
+  tamano: { w: number; h: number };
+}
+
+/** Lado del tirador de tamaño, en píxeles de pantalla. */
+const TIRADOR = 14;
+
 /**
- * Muestra el PDF y deja marcar dónde firma cada parte.
+ * Muestra el PDF y deja dibujar dónde firma cada parte.
  *
- * Las coordenadas se guardan normalizadas (0..1 desde arriba a la izquierda),
- * no en píxeles: así valen para cualquier zoom y para páginas de tamaños
- * distintos. pdf.js ya devuelve la página enderezada, de modo que lo que ves
- * aquí es lo mismo que verá el firmante.
+ * Las cajas se guardan normalizadas (0..1 desde arriba a la izquierda, con el
+ * centro como referencia), no en píxeles: así valen para cualquier zoom y para
+ * páginas de tamaños distintos. pdf.js ya devuelve la página enderezada, de
+ * modo que lo que ves aquí es lo mismo que verá el firmante.
  */
 export default function PdfPagePicker({
   fileUrl,
   markers,
-  positions,
+  boxes,
+  pageBoxes,
   activeSignerId,
+  page,
+  onPageChange,
   onPlace,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const docRef = useRef<PdfDoc | null>(null);
+  const arrastreRef = useRef<Arrastre | null>(null);
 
   const [pages, setPages] = useState(0);
-  const [page, setPage] = useState(1);
   const [error, setError] = useState<string | null>(null);
   // Última página realmente pintada: de aquí sale el indicador de carga, sin
   // tener que tocar estado nada más entrar en el efecto.
   const [pintada, setPintada] = useState(0);
   const [redibujar, setRedibujar] = useState(0);
+  // Caja que se está dibujando o moviendo ahora mismo, para verla en vivo.
+  const [previa, setPrevia] = useState<Box | null>(null);
+  const [cursor, setCursor] = useState("crosshair");
   const cargando = pages === 0 || pintada !== page;
+
+  const cajaDe = (signerId: string): Box | undefined =>
+    pageBoxes[signerId]?.[page] ?? boxes[signerId];
+  const esPropia = (signerId: string): boolean => Boolean(pageBoxes[signerId]?.[page]);
+  const cajaActiva = previa ?? cajaDe(activeSignerId);
 
   useEffect(() => {
     let vivo = true;
@@ -140,13 +167,112 @@ export default function PdfPagePicker({
     };
   }, []);
 
-  function place(event: React.MouseEvent<HTMLDivElement>) {
+  /* --- Dibujar, mover y redimensionar --- */
+
+  function punto(event: React.PointerEvent<HTMLDivElement>) {
     const rect = event.currentTarget.getBoundingClientRect();
-    if (rect.width === 0 || rect.height === 0) return;
-    onPlace(activeSignerId, {
-      x: (event.clientX - rect.left) / rect.width,
-      y: (event.clientY - rect.top) / rect.height,
-    });
+    if (rect.width === 0 || rect.height === 0) return null;
+    return {
+      rect,
+      p: {
+        x: (event.clientX - rect.left) / rect.width,
+        y: (event.clientY - rect.top) / rect.height,
+      },
+    };
+  }
+
+  /** Qué hay bajo el puntero: el tirador de tamaño, la caja, o la página. */
+  function zona(p: { x: number; y: number }, rect: DOMRect): Modo {
+    const caja = cajaDe(activeSignerId);
+    if (!caja) return "crear";
+    const derecha = (caja.x + caja.w / 2) * rect.width;
+    const abajo = (caja.y + caja.h / 2) * rect.height;
+    if (Math.abs(p.x * rect.width - derecha) <= TIRADOR && Math.abs(p.y * rect.height - abajo) <= TIRADOR) {
+      return "tamano";
+    }
+    const dentro = Math.abs(p.x - caja.x) <= caja.w / 2 && Math.abs(p.y - caja.y) <= caja.h / 2;
+    return dentro ? "mover" : "crear";
+  }
+
+  function onPointerDown(event: React.PointerEvent<HTMLDivElement>) {
+    if (event.button !== 0 || !activeSignerId) return;
+    const sitio = punto(event);
+    if (!sitio) return;
+
+    const modo = zona(sitio.p, sitio.rect);
+    const caja = cajaDe(activeSignerId);
+
+    arrastreRef.current = {
+      modo,
+      signerId: activeSignerId,
+      // Al redimensionar se queda quieta la esquina de arriba a la izquierda.
+      ancla:
+        modo === "tamano" && caja
+          ? { x: caja.x - caja.w / 2, y: caja.y - caja.h / 2 }
+          : sitio.p,
+      desvio: caja ? { x: sitio.p.x - caja.x, y: sitio.p.y - caja.y } : { x: 0, y: 0 },
+      tamano: caja ? { w: caja.w, h: caja.h } : { w: CAJA_ANCHO, h: CAJA_ALTO },
+    };
+
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setCursor(modo === "mover" ? "grabbing" : modo === "tamano" ? "nwse-resize" : "crosshair");
+    if (modo === "crear") setPrevia({ ...sitio.p, w: 0, h: 0 });
+  }
+
+  function onPointerMove(event: React.PointerEvent<HTMLDivElement>) {
+    const sitio = punto(event);
+    if (!sitio) return;
+    const arrastre = arrastreRef.current;
+
+    // Sin arrastre solo cambia el cursor: cruz para dibujar, mano para mover.
+    if (!arrastre) {
+      const modo = zona(sitio.p, sitio.rect);
+      setCursor(modo === "mover" ? "grab" : modo === "tamano" ? "nwse-resize" : "crosshair");
+      return;
+    }
+
+    if (arrastre.modo === "mover") {
+      setPrevia(
+        encajar({
+          x: sitio.p.x - arrastre.desvio.x,
+          y: sitio.p.y - arrastre.desvio.y,
+          w: arrastre.tamano.w,
+          h: arrastre.tamano.h,
+        }),
+      );
+      return;
+    }
+    setPrevia(desdeEsquinas(arrastre.ancla, sitio.p));
+  }
+
+  function onPointerUp(event: React.PointerEvent<HTMLDivElement>) {
+    const arrastre = arrastreRef.current;
+    arrastreRef.current = null;
+    if (!arrastre) return;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+
+    const sitio = punto(event);
+    const dibujada = previa;
+    setPrevia(null);
+    setCursor("crosshair");
+    if (!sitio || !dibujada) return;
+
+    // Un arrastre demasiado corto se entiende como un clic: caja por defecto.
+    const minuscula = dibujada.w <= CAJA_MINIMA || dibujada.h <= CAJA_MINIMA;
+    const caja =
+      arrastre.modo === "crear" && minuscula
+        ? encajar({ ...sitio.p, w: CAJA_ANCHO, h: CAJA_ALTO })
+        : dibujada;
+
+    onPlace(arrastre.signerId, page, caja);
+  }
+
+  function onPointerCancel() {
+    arrastreRef.current = null;
+    setPrevia(null);
+    setCursor("crosshair");
   }
 
   if (error) {
@@ -156,32 +282,52 @@ export default function PdfPagePicker({
   return (
     <div>
       <div ref={wrapperRef} className="card overflow-hidden">
-        <div className="relative cursor-crosshair select-none" onClick={place}>
+        <div
+          className="relative select-none"
+          style={{ cursor, touchAction: "none" }}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerCancel}
+        >
           <canvas ref={canvasRef} className="block w-full" />
 
           {markers.map((marker) => {
-            const position = positions[marker.signerId];
-            if (!position) return null;
             const activo = marker.signerId === activeSignerId;
+            const caja = activo ? cajaActiva : cajaDe(marker.signerId);
+            if (!caja) return null;
             return (
               <div
                 key={marker.signerId}
-                className="pointer-events-none absolute flex -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-md border-2 text-[10px] font-semibold whitespace-nowrap"
+                className={`pointer-events-none absolute flex items-center justify-center overflow-hidden rounded-md border-2 text-[10px] font-semibold whitespace-nowrap ${
+                  esPropia(marker.signerId) ? "border-dashed" : ""
+                }`}
                 style={{
-                  left: `${position.x * 100}%`,
-                  top: `${position.y * 100}%`,
-                  width: "22%",
-                  height: "7%",
+                  left: `${(caja.x - caja.w / 2) * 100}%`,
+                  top: `${(caja.y - caja.h / 2) * 100}%`,
+                  width: `${caja.w * 100}%`,
+                  height: `${caja.h * 100}%`,
                   borderColor: marker.color,
                   backgroundColor: `${marker.color}1f`,
                   color: marker.color,
-                  opacity: activo ? 1 : 0.65,
+                  opacity: activo ? 1 : 0.6,
                 }}
               >
                 {marker.label}
               </div>
             );
           })}
+
+          {/* Tirador para cambiar el tamaño de la caja del firmante activo. */}
+          {cajaActiva && !previa && (
+            <div
+              className="pointer-events-none absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-sm border-2 border-white bg-zinc-900 shadow"
+              style={{
+                left: `${(cajaActiva.x + cajaActiva.w / 2) * 100}%`,
+                top: `${(cajaActiva.y + cajaActiva.h / 2) * 100}%`,
+              }}
+            />
+          )}
 
           {cargando && (
             <div className="absolute inset-0 flex items-center justify-center bg-white/70 text-sm text-zinc-500">
@@ -195,7 +341,7 @@ export default function PdfPagePicker({
         <div className="mt-3 flex items-center justify-center gap-3 text-sm">
           <button
             type="button"
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            onClick={() => onPageChange(Math.max(1, page - 1))}
             disabled={page === 1}
             className="btn-secondary px-3 py-1.5"
           >
@@ -206,7 +352,7 @@ export default function PdfPagePicker({
           </span>
           <button
             type="button"
-            onClick={() => setPage((p) => Math.min(pages, p + 1))}
+            onClick={() => onPageChange(Math.min(pages, page + 1))}
             disabled={page === pages}
             className="btn-secondary px-3 py-1.5"
           >

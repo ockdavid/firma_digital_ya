@@ -7,6 +7,7 @@ import {
   type PDFPage,
   type PDFFont,
 } from "pdf-lib";
+import type { Box } from "./box";
 
 /* --- Geometria ---
    Una pagina PDF puede llevar /Rotate 90, 180 o 270 (tipico en escaneados).
@@ -52,24 +53,24 @@ export interface StampInput {
   slot: number;
   signedAt: Date;
   /**
-   * Punto elegido al preparar el envio, normalizado 0..1 desde la esquina
-   * superior izquierda de la pagina. Sin el, la rubrica cae en el margen.
+   * Caja elegida al preparar el envio, valida para todas las paginas: centro y
+   * tamano normalizados 0..1. Sin ella la rubrica cae en el margen.
    */
-  position: { x: number; y: number } | null;
+  box: Box | null;
+  /** Paginas (1..n) donde la firma va en otro sitio que el general. */
+  pageBoxes?: Record<number, Box>;
 }
 
 const RUBRIC_W = 58;
 const RUBRIC_H = 22;
-const PLACED_W = 130;
-const PLACED_H = 44;
 const MARGIN = 18;
 
 /**
  * Estampa la rubrica del firmante en TODAS las paginas.
  *
- * Con posicion elegida va centrada en ese punto en cada pagina; sin ella, al
- * margen inferior derecho, con un hueco distinto por firmante para que dos
- * rubricas no se solapen.
+ * Cada pagina usa su caja propia si la tiene y, si no, la general. Sin ninguna
+ * de las dos, la rubrica va al margen inferior derecho, con un hueco distinto
+ * por firmante para que dos rubricas no se solapen.
  */
 export async function stampAllPages(
   pdfBytes: Uint8Array,
@@ -80,21 +81,24 @@ export async function stampAllPages(
   const png = await pdf.embedPng(Buffer.from(input.signaturePngBase64, "base64"));
   const fecha = formatDate(input.signedAt);
 
-  const maxW = input.position ? PLACED_W : RUBRIC_W;
-  const maxH = input.position ? PLACED_H : RUBRIC_H;
-  const scale = Math.min(maxW / png.width, maxH / png.height);
-  const imgW = png.width * scale;
-  const imgH = png.height * scale;
-
-  for (const page of pdf.getPages()) {
+  const pages = pdf.getPages();
+  for (const [indice, page] of pages.entries()) {
     const v = visual(page);
+    const box = input.pageBoxes?.[indice + 1] ?? input.box;
+
+    // El trazo se ajusta dentro de la caja dibujada, sin deformarse.
+    const maxW = box ? box.w * v.width : RUBRIC_W;
+    const maxH = box ? box.h * v.height : RUBRIC_H;
+    const escala = Math.min(maxW / png.width, maxH / png.height);
+    const imgW = png.width * escala;
+    const imgH = png.height * escala;
 
     let x: number;
     let y: number;
-    if (input.position) {
-      // El punto marcado es el centro del bloque de firma.
-      const cx = input.position.x * v.width;
-      const cy = (1 - input.position.y) * v.height;
+    if (box) {
+      // La caja se guarda por su centro.
+      const cx = box.x * v.width;
+      const cy = (1 - box.y) * v.height;
       x = clamp(cx - imgW / 2, MARGIN, v.width - imgW - MARGIN);
       y = clamp(cy - imgH / 2, MARGIN + 7, v.height - imgH - MARGIN);
     } else {

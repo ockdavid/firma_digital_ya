@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import Header from "@/components/Header";
 import PrepareFlow from "@/components/PrepareFlow";
-import { getDocument, getSigners } from "@/lib/documents";
+import { getDocument, getPageBoxes, getSigners } from "@/lib/documents";
 import { KIND_LABEL } from "@/lib/labels";
 import { isAdmin } from "@/lib/session";
 
@@ -18,6 +18,7 @@ export default async function PrepararPage({ params }: PageProps<"/documento/[id
   if (document.status !== "draft") redirect(`/documento/${id}`);
 
   const signers = getSigners(id);
+  const pageBoxes = getPageBoxes(id);
 
   return (
     <>
@@ -32,6 +33,7 @@ export default async function PrepararPage({ params }: PageProps<"/documento/[id
             title={document.title}
             kindLabel={KIND_LABEL[document.kind]}
             pageCount={document.page_count}
+            pageBoxes={pageBoxes}
             signers={signers.map((s) => ({
               id: s.id,
               name: s.name,
@@ -41,6 +43,8 @@ export default async function PrepararPage({ params }: PageProps<"/documento/[id
               docIdMasked: s.doc_id_masked,
               posX: s.pos_x,
               posY: s.pos_y,
+              posW: s.pos_w,
+              posH: s.pos_h,
             }))}
           />
         </div>

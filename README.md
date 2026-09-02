@@ -50,10 +50,13 @@ dominio y pon `EMAIL_DRIVER=resend`, `RESEND_API_KEY` y `MAIL_FROM`.
 1. **Borrador.** Subes el PDF y añades los firmantes. Se valida el documento, se le
    quitan JavaScript embebido, acciones de apertura y campos de formulario, y se guarda
    junto a su huella SHA-256. **No se envía nada todavía.**
-2. **Colocación.** Ves el contrato y haces clic donde debe firmar cada persona. Esa
-   posición se repite en todas las páginas. Quien no lleve marca firmará en el margen
-   inferior derecho. Al enviar, las posiciones quedan guardadas como plantilla del tipo
-   de contrato, así el siguiente alquiler ya viene colocado.
+2. **Colocación.** Ves el contrato y dibujas arrastrando la caja donde debe firmar cada
+   persona; un clic suelto la coloca con el tamaño de siempre. Después se mueve
+   arrastrándola y se redimensiona tirando de su esquina. La primera caja vale para todas
+   las páginas y, si la mueves dentro de una página concreta, solo cambia esa: las
+   excepciones se guardan aparte. Quien no lleve marca firmará en el margen inferior
+   derecho. Al enviar, la caja general queda guardada como plantilla del tipo de contrato,
+   así el siguiente alquiler ya viene colocado.
 3. **Revisión.** Repasas PDF, correos y colocación. Mientras es borrador puedes editar
    los datos, sustituir el PDF equivocado o descartarlo entero.
 4. **Envío.** Ahí se generan los enlaces, con un token aleatorio de 32 bytes por
@@ -118,8 +121,7 @@ Al desplegar:
 
 ## Lo que no hace todavía
 
-- Firmas en sitios distintos según la página, o campos separados de fecha e iniciales:
-  cada firmante tiene una única posición que se repite en todas las hojas.
+- Campos separados de fecha e iniciales: cada firmante solo coloca su rúbrica.
 - Sellado PAdES con certificado (haría detectable cualquier cambio posterior en Adobe
   Reader).
 - Recordatorios automáticos a quien no firma.

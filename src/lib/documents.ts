@@ -5,6 +5,7 @@ import { DOC_ID_LABEL, maskDocId, validateDocId, type DocIdType } from "./dni";
 import { AUDIT_LABEL, auditFor, logAudit, type AuditType } from "./audit";
 import { appendSignaturePage, ingestPdf, stampAllPages } from "./pdf";
 import { deleteFile, paths, readFile, saveFile } from "./storage";
+import { CAJA_ALTO, CAJA_ANCHO, cajaGuardada, encajar, type Box } from "./box";
 import { completedEmail, invitationEmail, sendMail } from "./mail";
 
 export interface NewSigner {
@@ -19,6 +20,35 @@ export interface Placement {
   signerId: string;
   x: number;
   y: number;
+  w?: number;
+  h?: number;
+  /** Páginas (1..n) donde la firma va en otro sitio que el general. */
+  pages?: { page: number; x: number; y: number; w?: number; h?: number }[];
+}
+
+/** La caja general del firmante, con el tamaño por defecto si es de antes. */
+function cajaDe(signer: SignerRow): Box | null {
+  return cajaGuardada(signer.pos_x, signer.pos_y, signer.pos_w, signer.pos_h);
+}
+
+/** Excepciones por página de un firmante, indexadas por número de página. */
+function cajasPorPagina(signerId: string): Record<number, Box> {
+  const rows = db
+    .prepare("SELECT page, pos_x, pos_y, pos_w, pos_h FROM signer_page_boxes WHERE signer_id = ?")
+    .all(signerId) as { page: number; pos_x: number; pos_y: number; pos_w: number; pos_h: number }[];
+  const cajas: Record<number, Box> = {};
+  for (const r of rows) cajas[r.page] = { x: r.pos_x, y: r.pos_y, w: r.pos_w, h: r.pos_h };
+  return cajas;
+}
+
+/** Lo mismo para todo el expediente: lo que necesita la pantalla de colocación. */
+export function getPageBoxes(documentId: string): Record<string, Record<number, Box>> {
+  const todas: Record<string, Record<number, Box>> = {};
+  for (const signer of getSigners(documentId)) {
+    const cajas = cajasPorPagina(signer.id);
+    if (Object.keys(cajas).length > 0) todas[signer.id] = cajas;
+  }
+  return todas;
 }
 
 /* ---------- Consultas ---------- */
@@ -80,23 +110,38 @@ function validateSigners(
 
 /* ---------- Plantillas de colocacion ---------- */
 
-function templateFor(kind: DocumentKind): Map<number, { x: number; y: number }> {
+function templateFor(kind: DocumentKind): Map<number, Box> {
   const rows = db
-    .prepare("SELECT slot, pos_x, pos_y FROM placement_templates WHERE kind = ?")
-    .all(kind) as { slot: number; pos_x: number; pos_y: number }[];
-  return new Map(rows.map((r) => [r.slot, { x: r.pos_x, y: r.pos_y }]));
+    .prepare("SELECT slot, pos_x, pos_y, pos_w, pos_h FROM placement_templates WHERE kind = ?")
+    .all(kind) as {
+    slot: number;
+    pos_x: number;
+    pos_y: number;
+    pos_w: number | null;
+    pos_h: number | null;
+  }[];
+  const plantilla = new Map<number, Box>();
+  for (const r of rows) {
+    const caja = cajaGuardada(r.pos_x, r.pos_y, r.pos_w, r.pos_h);
+    if (caja) plantilla.set(r.slot, caja);
+  }
+  return plantilla;
 }
 
-/** Al enviar, recordamos donde firmo cada parte para el siguiente contrato igual. */
+/**
+ * Al enviar, recordamos donde firmo cada parte para el siguiente contrato igual.
+ * Solo la caja general: las excepciones dependen del contenido de cada PDF.
+ */
 function saveTemplate(kind: DocumentKind, signers: SignerRow[]): void {
   const upsert = db.prepare(
-    `INSERT INTO placement_templates (kind, slot, pos_x, pos_y) VALUES (?, ?, ?, ?)
-       ON CONFLICT(kind, slot) DO UPDATE SET pos_x = excluded.pos_x, pos_y = excluded.pos_y`,
+    `INSERT INTO placement_templates (kind, slot, pos_x, pos_y, pos_w, pos_h)
+          VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(kind, slot) DO UPDATE SET pos_x = excluded.pos_x, pos_y = excluded.pos_y,
+                                             pos_w = excluded.pos_w, pos_h = excluded.pos_h`,
   );
   for (const signer of signers) {
-    if (signer.pos_x !== null && signer.pos_y !== null) {
-      upsert.run(kind, signer.order_index, signer.pos_x, signer.pos_y);
-    }
+    const caja = cajaDe(signer);
+    if (caja) upsert.run(kind, signer.order_index, caja.x, caja.y, caja.w, caja.h);
   }
 }
 
@@ -162,7 +207,7 @@ function insertSigner(
   documentId: string,
   signer: NewSigner,
   index: number,
-  positions: Map<number, { x: number; y: number }>,
+  positions: Map<number, Box>,
 ): void {
   const normalized = validateDocId(signer.docId, signer.docIdType);
   if (!normalized.ok) throw new Error(normalized.error);
@@ -171,8 +216,8 @@ function insertSigner(
   db.prepare(
     `INSERT INTO signers
        (id, document_id, name, email, role, order_index, doc_id_type, doc_id_hash,
-        doc_id_masked, status, pos_x, pos_y)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+        doc_id_masked, status, pos_x, pos_y, pos_w, pos_h)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)`,
   ).run(
     id("sgn"),
     documentId,
@@ -185,6 +230,8 @@ function insertSigner(
     maskDocId(normalized.value),
     position?.x ?? null,
     position?.y ?? null,
+    position?.w ?? null,
+    position?.h ?? null,
   );
 }
 
@@ -301,15 +348,52 @@ export function savePlacement(
     return { ok: false, error: "El documento ya se ha enviado." };
   }
 
-  const valid = new Set(getSigners(documentId).map((s) => s.id));
-  const update = db.prepare("UPDATE signers SET pos_x = ?, pos_y = ? WHERE id = ?");
+  // El envío es la foto completa de la pantalla: quien no viene en la lista
+  // se queda sin posición y su rúbrica irá al margen.
+  const todos = getSigners(documentId).map((s) => s.id);
+  const valid = new Set(todos);
+  const update = db.prepare(
+    "UPDATE signers SET pos_x = ?, pos_y = ?, pos_w = ?, pos_h = ? WHERE id = ?",
+  );
+  const borrarPaginas = db.prepare("DELETE FROM signer_page_boxes WHERE signer_id = ?");
+  const insertarPagina = db.prepare(
+    `INSERT INTO signer_page_boxes (signer_id, page, pos_x, pos_y, pos_w, pos_h)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  );
 
   writeTransaction(() => {
+    const colocados = new Set<string>();
+
     for (const placement of placements) {
       if (!valid.has(placement.signerId)) continue;
-      const insideX = Math.min(Math.max(placement.x, 0), 1);
-      const insideY = Math.min(Math.max(placement.y, 0), 1);
-      update.run(insideX, insideY, placement.signerId);
+      colocados.add(placement.signerId);
+
+      const general = encajar({
+        x: placement.x,
+        y: placement.y,
+        w: placement.w ?? CAJA_ANCHO,
+        h: placement.h ?? CAJA_ALTO,
+      });
+      update.run(general.x, general.y, general.w, general.h, placement.signerId);
+
+      borrarPaginas.run(placement.signerId);
+      for (const excepcion of placement.pages ?? []) {
+        if (!Number.isInteger(excepcion.page)) continue;
+        if (excepcion.page < 1 || excepcion.page > document.page_count) continue;
+        const caja = encajar({
+          x: excepcion.x,
+          y: excepcion.y,
+          w: excepcion.w ?? general.w,
+          h: excepcion.h ?? general.h,
+        });
+        insertarPagina.run(placement.signerId, excepcion.page, caja.x, caja.y, caja.w, caja.h);
+      }
+    }
+
+    for (const signerId of todos) {
+      if (colocados.has(signerId)) continue;
+      update.run(null, null, null, null, signerId);
+      borrarPaginas.run(signerId);
     }
   });
 
@@ -565,10 +649,8 @@ export async function recordSignature(
       name: signer.name,
       slot: signer.order_index,
       signedAt: new Date(),
-      position:
-        signer.pos_x !== null && signer.pos_y !== null
-          ? { x: signer.pos_x, y: signer.pos_y }
-          : null,
+      box: cajaDe(signer),
+      pageBoxes: cajasPorPagina(signer.id),
     });
 
     const nextVersion = baseVersion + 1;
