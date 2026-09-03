@@ -44,6 +44,9 @@ export interface SignerRow {
   pos_y: number | null;
   pos_w: number | null;
   pos_h: number | null;
+  /** Estado del último correo que se le mandó: sin error, salió bien. */
+  email_sent_at: string | null;
+  email_error: string | null;
   failed_attempts: number;
   locked_until: string | null;
   viewed_at: string | null;
@@ -108,6 +111,8 @@ CREATE TABLE IF NOT EXISTS signers (
   pos_y            REAL,
   pos_w            REAL,
   pos_h            REAL,
+  email_sent_at    TEXT,
+  email_error      TEXT,
   failed_attempts  INTEGER NOT NULL DEFAULT 0,
   locked_until     TEXT,
   viewed_at        TEXT,
@@ -161,6 +166,8 @@ const MIGRACIONES: { tabla: string; columna: string; definicion: string }[] = [
   { tabla: "signers", columna: "pos_y", definicion: "REAL" },
   { tabla: "signers", columna: "pos_w", definicion: "REAL" },
   { tabla: "signers", columna: "pos_h", definicion: "REAL" },
+  { tabla: "signers", columna: "email_sent_at", definicion: "TEXT" },
+  { tabla: "signers", columna: "email_error", definicion: "TEXT" },
   { tabla: "placement_templates", columna: "pos_w", definicion: "REAL" },
   { tabla: "placement_templates", columna: "pos_h", definicion: "REAL" },
 ];

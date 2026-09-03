@@ -26,6 +26,9 @@ export default async function DocumentPage({ params }: PageProps<"/documento/[id
   const completed = document.status === "completed";
   const cancelled = document.status === "cancelled";
   const signedCount = signers.filter((s) => s.status === "signed").length;
+  // Un correo que no sale deja el expediente a medias sin que se note: el
+  // enlace existe, pero su destinatario no sabe que tiene que firmar.
+  const sinCorreo = signers.filter((s) => s.email_error);
 
   return (
     <>
@@ -65,6 +68,22 @@ export default async function DocumentPage({ params }: PageProps<"/documento/[id
           </div>
         </div>
 
+        {sinCorreo.length > 0 && !cancelled && (
+          <div className="card mb-6 border-red-200 bg-red-50/70 px-5 py-4">
+            <p className="text-sm font-semibold text-red-800">
+              {sinCorreo.length === 1
+                ? "Un correo no llegó a salir"
+                : `${sinCorreo.length} correos no llegaron a salir`}
+            </p>
+            <p className="mt-1 text-xs leading-relaxed text-red-700">
+              {sinCorreo.map((s) => s.name).join(", ")}{" "}
+              {sinCorreo.length === 1 ? "no ha recibido" : "no han recibido"} nada. El expediente
+              está en circulación igualmente: comprueba la dirección y vuelve a enviarle el enlace
+              desde su ficha.
+            </p>
+          </div>
+        )}
+
         <section className="mb-8">
           <h2 className="mb-3 text-sm font-semibold">Firmantes</h2>
           <ul className="space-y-2.5">
@@ -84,6 +103,11 @@ export default async function DocumentPage({ params }: PageProps<"/documento/[id
                     <p className="mt-0.5 text-xs text-emerald-700">
                       Firmado el {formatDateTime(new Date(signer.signed_at))}
                       {signer.sign_ip && ` desde ${signer.sign_ip}`}
+                    </p>
+                  )}
+                  {signer.email_error && (
+                    <p className="mt-0.5 text-xs text-red-700">
+                      No se pudo enviar el correo: {signer.email_error}
                     </p>
                   )}
                 </div>

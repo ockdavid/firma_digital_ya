@@ -5,6 +5,7 @@ export type AuditType =
   | "borrador_editado"
   | "documento_cancelado"
   | "enlace_enviado"
+  | "enlace_fallido"
   | "enlace_abierto"
   | "identidad_ok"
   | "identidad_fallida"
@@ -12,13 +13,15 @@ export type AuditType =
   | "documento_visualizado"
   | "firmado"
   | "documento_completado"
-  | "copia_final_enviada";
+  | "copia_final_enviada"
+  | "copia_final_fallida";
 
 export const AUDIT_LABEL: Record<AuditType, string> = {
   documento_creado: "Documento creado",
   borrador_editado: "Borrador editado",
   documento_cancelado: "Expediente cancelado",
   enlace_enviado: "Enlace enviado",
+  enlace_fallido: "No se pudo enviar el enlace",
   enlace_abierto: "Enlace abierto",
   identidad_ok: "Identidad verificada",
   identidad_fallida: "Identidad incorrecta",
@@ -27,6 +30,7 @@ export const AUDIT_LABEL: Record<AuditType, string> = {
   firmado: "Firmado",
   documento_completado: "Documento completado",
   copia_final_enviada: "Copia final enviada",
+  copia_final_fallida: "No se pudo enviar la copia final",
 };
 
 const insert = db.prepare(`

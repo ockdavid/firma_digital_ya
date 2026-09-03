@@ -6,7 +6,7 @@ import { AUDIT_LABEL, auditFor, logAudit, type AuditType } from "./audit";
 import { appendSignaturePage, ingestPdf, stampAllPages } from "./pdf";
 import { deleteFile, paths, readFile, saveFile } from "./storage";
 import { CAJA_ALTO, CAJA_ANCHO, cajaGuardada, encajar, type Box } from "./box";
-import { completedEmail, invitationEmail, sendMail } from "./mail";
+import { completedEmail, invitationEmail, sendMail, type Mail } from "./mail";
 
 export interface NewSigner {
   name: string;
@@ -418,6 +418,43 @@ export async function discardDraft(
   return { ok: true };
 }
 
+/* ---------- Correo ---------- */
+
+/**
+ * Manda un correo y deja constancia de como fue.
+ *
+ * Un fallo aqui no puede tumbar la operacion -el enlace ya existe y el
+ * documento ya esta firmado- pero tampoco puede pasar desapercibido: se guarda
+ * en el firmante para que salga en su ficha y se pueda reintentar.
+ */
+async function entregar(
+  documentId: string,
+  signer: { id: string; email: string },
+  mail: Omit<Mail, "to">,
+  tipos: { ok: AuditType; error: AuditType },
+  detalle?: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    await sendMail({ to: signer.email, ...mail });
+    db.prepare("UPDATE signers SET email_sent_at = ?, email_error = NULL WHERE id = ?").run(
+      new Date().toISOString(),
+      signer.id,
+    );
+    logAudit({ documentId, signerId: signer.id, type: tipos.ok, detail: detalle ?? signer.email });
+    return { ok: true };
+  } catch (error) {
+    const mensaje = (error instanceof Error ? error.message : "envío fallido").slice(0, 300);
+    db.prepare("UPDATE signers SET email_error = ? WHERE id = ?").run(mensaje, signer.id);
+    logAudit({
+      documentId,
+      signerId: signer.id,
+      type: tipos.error,
+      detail: `${signer.email}: ${mensaje}`,
+    });
+    return { ok: false, error: mensaje };
+  }
+}
+
 /* ---------- Envio ---------- */
 
 /** Genera los enlaces y los manda. Es el punto en que el documento sale de tus manos. */
@@ -459,17 +496,10 @@ export async function sendDocument(
       link: `${config.appUrl}/firmar/${token}`,
       expiresAt,
     });
-    try {
-      await sendMail({ to: signer.email, ...mail });
-      logAudit({ documentId, signerId: signer.id, type: "enlace_enviado", detail: signer.email });
-    } catch (error) {
-      logAudit({
-        documentId,
-        signerId: signer.id,
-        type: "enlace_enviado",
-        detail: `ERROR: ${error instanceof Error ? error.message : "envío fallido"}`,
-      });
-    }
+    await entregar(documentId, signer, mail, {
+      ok: "enlace_enviado",
+      error: "enlace_fallido",
+    });
   }
 
   return { ok: true };
@@ -778,26 +808,12 @@ async function completeDocument(documentId: string): Promise<void> {
       signerNames: signers.map((s) => s.name),
       sha256: finalSha,
     });
-    try {
-      await sendMail({
-        to: signer.email,
-        ...mail,
-        attachments: [{ filename, content: Buffer.from(final) }],
-      });
-      logAudit({
-        documentId,
-        signerId: signer.id,
-        type: "copia_final_enviada",
-        detail: signer.email,
-      });
-    } catch (error) {
-      logAudit({
-        documentId,
-        signerId: signer.id,
-        type: "copia_final_enviada",
-        detail: `ERROR: ${error instanceof Error ? error.message : "envío fallido"}`,
-      });
-    }
+    await entregar(
+      documentId,
+      signer,
+      { ...mail, attachments: [{ filename, content: Buffer.from(final) }] },
+      { ok: "copia_final_enviada", error: "copia_final_fallida" },
+    );
   }
 }
 
@@ -833,13 +849,21 @@ export async function resendInvitation(
     link: `${config.appUrl}/firmar/${token}`,
     expiresAt,
   });
-  await sendMail({ to: signer.email, ...mail });
-  logAudit({
-    documentId: document.id,
-    signerId,
-    type: "enlace_enviado",
-    detail: `Reenviado a ${signer.email}`,
-  });
+  const entregado = await entregar(
+    document.id,
+    signer,
+    mail,
+    { ok: "enlace_enviado", error: "enlace_fallido" },
+    `Reenviado a ${signer.email}`,
+  );
+  // El enlace anterior ya está invalidado: si el correo no sale, hay que
+  // reintentarlo hasta que salga, no dejarlo a medias.
+  if (!entregado.ok) {
+    return {
+      ok: false,
+      error: `No se pudo enviar el correo: ${entregado.error}. El enlace anterior ya no vale, vuelve a intentarlo.`,
+    };
+  }
   return { ok: true };
 }
 
