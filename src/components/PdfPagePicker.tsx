@@ -120,13 +120,12 @@ export default function PdfPagePicker({
       const wrapper = wrapperRef.current;
       if (!doc || !canvas || !wrapper) return;
 
-      try {
+      const pintar = async (ratio: number) => {
         const pdfPage = await doc.getPage(page);
         if (!vivo) return;
 
         const base = pdfPage.getViewport({ scale: 1 });
         const ancho = wrapper.clientWidth || 640;
-        const ratio = window.devicePixelRatio || 1;
         const viewport = pdfPage.getViewport({ scale: (ancho / base.width) * ratio });
 
         canvas.width = Math.floor(viewport.width);
@@ -137,10 +136,27 @@ export default function PdfPagePicker({
         tarea = pdfPage.render({ canvas, viewport });
         await tarea.promise;
         if (vivo) setPintada(page);
+      };
+
+      // Cancelar un render en curso lanza: no es un error que mostrar.
+      const cancelado = (e: unknown) =>
+        (e as { name?: string })?.name === "RenderingCancelledException";
+
+      try {
+        // Safari en movil se queda sin memoria con los lienzos grandes, asi que
+        // el nitido se limita a 2x y, si aun asi falla, se reintenta a 1x.
+        await pintar(Math.min(window.devicePixelRatio || 1, 2));
       } catch (e) {
-        // Cancelar un render en curso lanza: no es un error que mostrar.
-        const cancelado = (e as { name?: string })?.name === "RenderingCancelledException";
-        if (vivo && !cancelado) setError("No se pudo dibujar esta página.");
+        if (cancelado(e) || !vivo) return;
+        try {
+          await pintar(1);
+        } catch (e2) {
+          if (cancelado(e2) || !vivo) return;
+          // El detalle importa: sin el, un fallo en el movil no hay quien lo
+          // diagnostique, porque alli no se puede abrir la consola.
+          const detalle = e2 instanceof Error ? `${e2.name}: ${e2.message}` : String(e2);
+          setError(`No se pudo dibujar esta pagina. (${detalle})`);
+        }
       }
     })();
 
@@ -284,7 +300,10 @@ export default function PdfPagePicker({
       <div ref={wrapperRef} className="card overflow-hidden">
         <div
           className="relative select-none"
-          style={{ cursor, touchAction: "none" }}
+          /* pan-y: en el movil el dedo desplaza la pagina como en cualquier
+             sitio. Un toque suelto sigue colocando la caja, y para arrastrarla
+             esta el agarre de abajo, que si captura el gesto. */
+          style={{ cursor, touchAction: "pan-y" }}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
@@ -317,6 +336,22 @@ export default function PdfPagePicker({
               </div>
             );
           })}
+
+          {/* Encima de la caja activa, el dedo arrastra en vez de desplazar.
+              Se estira un poco por abajo y por la derecha para que el tirador
+              de tamaño entre dentro. */}
+          {cajaActiva && (
+            <div
+              className="absolute"
+              style={{
+                left: `${(cajaActiva.x - cajaActiva.w / 2) * 100}%`,
+                top: `${(cajaActiva.y - cajaActiva.h / 2) * 100}%`,
+                width: `calc(${cajaActiva.w * 100}% + ${TIRADOR}px)`,
+                height: `calc(${cajaActiva.h * 100}% + ${TIRADOR}px)`,
+                touchAction: "none",
+              }}
+            />
+          )}
 
           {/* Tirador para cambiar el tamaño de la caja del firmante activo. */}
           {cajaActiva && !previa && (
