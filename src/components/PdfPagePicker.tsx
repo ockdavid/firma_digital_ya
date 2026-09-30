@@ -91,7 +91,11 @@ export default function PdfPagePicker({
 
     (async () => {
       try {
-        const pdfjs = await import("pdfjs-dist");
+        // Compilacion "legacy" a proposito: la normal usa
+        // Map.prototype.getOrInsertComputed, que Safari todavia no trae, y el
+        // visor revienta en cuanto se abre desde un iPhone. Esta trae el
+        // parche dentro. El worker de public/ es el legacy tambien.
+        const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
         pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
         const doc = (await pdfjs.getDocument({ url: fileUrl }).promise) as unknown as PdfDoc;
         if (!vivo) return;
