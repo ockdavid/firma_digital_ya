@@ -315,7 +315,7 @@ function RoleField({
             setLibre(false);
             onChange("");
           }}
-          className="mt-1 text-xs font-medium text-zinc-500 underline-offset-2 hover:text-zinc-900 hover:underline"
+          className="btn-small mt-1 text-zinc-600"
         >
           Elegir de la lista
         </button>

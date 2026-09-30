@@ -110,7 +110,7 @@ export default function SignaturePad({ onChange }: Props) {
       <button
         type="button"
         onClick={clear}
-        className="mt-2 text-xs font-medium text-zinc-500 underline-offset-2 hover:text-zinc-900 hover:underline"
+        className="btn-small mt-2 text-zinc-600"
       >
         Borrar y repetir
       </button>

@@ -36,7 +36,7 @@ export default function ResendButton({
     <button
       onClick={resend}
       disabled={state === "busy"}
-      className="text-xs font-medium text-zinc-500 underline-offset-2 transition hover:text-zinc-900 hover:underline disabled:opacity-50"
+      className="btn-small text-zinc-600"
     >
       {state === "busy" ? "Enviando…" : state === "error" ? "Reintentar" : "Reenviar enlace"}
     </button>

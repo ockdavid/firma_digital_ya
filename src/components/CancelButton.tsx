@@ -36,7 +36,7 @@ export default function CancelButton({
     return (
       <button
         onClick={() => setConfirmando(true)}
-        className="text-xs font-medium text-zinc-500 underline-offset-2 transition hover:text-red-600 hover:underline"
+        className="btn-small text-zinc-600 hover:border-red-300 hover:bg-red-50 hover:text-red-600"
       >
         Cancelar expediente
       </button>

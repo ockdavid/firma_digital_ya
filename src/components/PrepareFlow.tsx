@@ -240,24 +240,18 @@ export default function PrepareFlow({
             </div>
 
             {paginaEsPropia && (
-              <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600">
-                <span>
+              <div className="mt-3 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5">
+                <p className="text-xs text-zinc-600">
                   En la página {pagina}, {nombreActivo} firma en un sitio distinto al general.
-                </span>
-                <button
-                  type="button"
-                  onClick={usarGeneral}
-                  className="font-medium text-zinc-900 underline-offset-2 hover:underline"
-                >
-                  Usar la posición general
-                </button>
-                <button
-                  type="button"
-                  onClick={aplicarATodas}
-                  className="font-medium text-zinc-900 underline-offset-2 hover:underline"
-                >
-                  Aplicar esta a todas las páginas
-                </button>
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button type="button" onClick={usarGeneral} className="btn-small">
+                    Usar la posición general
+                  </button>
+                  <button type="button" onClick={aplicarATodas} className="btn-small">
+                    Aplicar esta a todas las páginas
+                  </button>
+                </div>
               </div>
             )}
 
@@ -265,7 +259,7 @@ export default function PrepareFlow({
               <button
                 type="button"
                 onClick={quitarPosicion}
-                className="mt-3 text-xs font-medium text-zinc-500 underline-offset-2 hover:text-zinc-900 hover:underline"
+                className="btn-small mt-3 text-zinc-600"
               >
                 Quitar la posición de {nombreActivo} y dejarla al margen
               </button>

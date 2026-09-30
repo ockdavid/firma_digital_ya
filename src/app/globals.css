@@ -49,6 +49,15 @@ body {
          border border-zinc-300 bg-white text-zinc-800 hover:bg-zinc-50;
 }
 
+/* Acciones secundarias dentro de una tarjeta: tienen que verse como botones,
+   porque en texto plano pasaban por descripcion y nadie las pulsaba. */
+@utility btn-small {
+  @apply inline-flex items-center justify-center gap-1.5 rounded-lg border
+         border-zinc-300 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-800
+         shadow-sm transition hover:bg-zinc-50 hover:border-zinc-400
+         disabled:opacity-50 disabled:cursor-not-allowed;
+}
+
 @utility pill {
   @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium;
 }
