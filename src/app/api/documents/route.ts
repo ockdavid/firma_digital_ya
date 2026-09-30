@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { createDraft } from "@/lib/documents";
 import { parseDocumentForm } from "@/lib/documentForm";
-import { isAdmin } from "@/lib/session";
+import { isAdmin, isBot } from "@/lib/session";
 
 export async function POST(request: Request) {
-  if (!(await isAdmin())) {
+  // El panel entra con cookie; el bot de Telegram, con su clave de API.
+  if (!(await isAdmin()) && !isBot(request)) {
     return NextResponse.json({ error: "No autorizado." }, { status: 401 });
   }
 

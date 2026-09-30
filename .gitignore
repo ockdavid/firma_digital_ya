@@ -50,3 +50,6 @@ next-env.d.ts
 
 # Contratos sueltos en la raiz: nunca al repositorio
 /*.pdf
+
+# Nada de credenciales en el repositorio (este repo es publico)
+/credenciales

@@ -14,6 +14,35 @@ export function checkAdminPassword(input: string): boolean {
   return verifySecret(input, adminHash);
 }
 
+/* ---- Puerta para el bot de Telegram ----
+   El bot no tiene navegador ni cookies: se identifica con una clave fija que
+   viaja en la cabecera. Si BOT_API_KEY no está puesta, la puerta no existe. */
+
+const botHash = config.botApiKey ? hashSecret(config.botApiKey) : null;
+
+export function isBot(request: Request): boolean {
+  if (!botHash) return false;
+  const header = request.headers.get("authorization") ?? "";
+  const key = header.startsWith("Bearer ") ? header.slice(7) : "";
+  if (!key) return false;
+  return verifySecret(key, botHash);
+}
+
+/* ---- Clave corta de acceso a un borrador ----
+   Abre la sesión de administración con una clave más débil que la del panel.
+   Existe solo si ACCESS_CODE está puesta; quítala del .env y desaparece. */
+
+const accessHash = config.accessCode ? hashSecret(config.accessCode) : null;
+
+export function accessCodeEnabled(): boolean {
+  return accessHash !== null;
+}
+
+export function checkAccessCode(input: string): boolean {
+  if (!accessHash) return false;
+  return verifySecret(input, accessHash);
+}
+
 const baseCookie = {
   httpOnly: true,
   sameSite: "lax" as const,

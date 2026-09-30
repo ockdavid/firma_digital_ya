@@ -16,6 +16,11 @@ export const config = {
   appSecret: env("APP_SECRET"),
   /** Contraseña del panel de administración (solo tú). */
   adminPassword: env("ADMIN_PASSWORD"),
+  /** Clave que usa el bot de Telegram para depositar contratos. Vacía = puerta cerrada. */
+  botApiKey: process.env.BOT_API_KEY ?? "",
+  /** Clave corta para abrir un borrador concreto desde el enlace del bot.
+      Vacía = la pantalla /acceso no existe. Pensada para demos, no para el día a día. */
+  accessCode: process.env.ACCESS_CODE ?? "",
 
   emailDriver: env("EMAIL_DRIVER", "console") as "console" | "resend",
   resendApiKey: process.env.RESEND_API_KEY ?? "",
