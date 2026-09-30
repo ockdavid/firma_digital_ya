@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import PdfReader from "./PdfReader";
 import SignaturePad from "./SignaturePad";
 
 interface Props {
@@ -176,16 +177,12 @@ function SignStep({
             href={`/api/sign/${token}/pdf`}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-xs font-medium text-zinc-500 underline-offset-2 hover:text-zinc-900 hover:underline"
+            className="text-xs font-medium text-zinc-600 underline underline-offset-2 hover:text-zinc-900"
           >
             Abrir en pestaña nueva
           </a>
         </div>
-        <iframe
-          src={`/api/sign/${token}/pdf`}
-          title="Contrato"
-          className="h-[60vh] w-full bg-zinc-100"
-        />
+        <PdfReader fileUrl={`/api/sign/${token}/pdf`} />
       </section>
 
       <section className="card p-5">
