@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-export default function LoginForm() {
+export default function LoginForm({ destino = "/" }: { destino?: string }) {
   const router = useRouter();
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -19,7 +19,7 @@ export default function LoginForm() {
       body: JSON.stringify({ password }),
     });
     if (response.ok) {
-      router.replace("/");
+      router.replace(destino);
       router.refresh();
       return;
     }

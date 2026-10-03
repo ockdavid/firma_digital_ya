@@ -9,9 +9,12 @@ import { isAdmin } from "@/lib/session";
 export const dynamic = "force-dynamic";
 
 export default async function PrepararPage({ params }: PageProps<"/documento/[id]/preparar">) {
-  if (!(await isAdmin())) redirect("/login");
-
   const { id } = await params;
+  // Tras identificarse vuelve aqui: el enlace del bot lleva directo a esta pantalla.
+  if (!(await isAdmin())) {
+    redirect(`/login?next=${encodeURIComponent(`/documento/${id}/preparar`)}`);
+  }
+
   const document = getDocument(id);
   if (!document) notFound();
   // Ya enviado: la preparación no tiene sentido, la ficha sí.
